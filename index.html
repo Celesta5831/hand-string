@@ -166,7 +166,7 @@ function initHands() {
         const lm = results.multiHandLandmarks[0];
         FINGERTIPS.forEach((tip, i) => {
           // flip X because video is NOT mirrored
-          nodes[i].tx = (1 - lm[tip].x) * canvas.width;
+          nodes[i].tx = lm[tip].x * canvas.width;
           nodes[i].ty = lm[tip].y * canvas.height;
         });
       } else {
