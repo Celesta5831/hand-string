@@ -63,7 +63,6 @@ window.addEventListener('resize', () => {
 });
 
 const FINGERTIPS = [4, 8, 12, 16, 20];
-// Elegant palette: gold, rose, mint, sky, lavender
 const COLORS = ['#f5c842', '#f76b8a', '#43e8b0', '#4db8ff', '#b388ff'];
 
 let handVisible = false;
@@ -89,38 +88,32 @@ function draw() {
   nodes.forEach(n => n.update());
 
   if (handVisible) {
-    // Draw glow strings
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i+1; j < nodes.length; j++) {
         const a = nodes[i], b = nodes[j];
 
-        // Outer glow
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
         const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
         grad.addColorStop(0, a.color + '55');
         grad.addColorStop(1, b.color + '55');
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = 10;
-        ctx.shadowBlur = 20;
-        ctx.shadowColor = a.color;
-        ctx.stroke();
-
-        // Inner bright line
         ctx.beginPath();
         ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 10;
+        ctx.shadowBlur = 20; ctx.shadowColor = a.color;
+        ctx.stroke();
+
         const grad2 = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
         grad2.addColorStop(0, a.color);
         grad2.addColorStop(1, b.color);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
         ctx.strokeStyle = grad2;
         ctx.lineWidth = 1.2;
-        ctx.shadowBlur = 6;
-        ctx.shadowColor = '#fff';
+        ctx.shadowBlur = 6; ctx.shadowColor = '#fff';
         ctx.stroke();
       }
     }
 
-    // Draw dots
     nodes.forEach(n => {
       ctx.beginPath(); ctx.arc(n.x, n.y, 7, 0, Math.PI*2);
       ctx.fillStyle = n.color;
@@ -140,10 +133,9 @@ function draw() {
 async function startCamera() {
   startBtn.style.display = 'none';
   status.textContent = 'Loading...';
-
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
+      video: { facingMode: { ideal: 'user' } },
       audio: false
     });
     video.srcObject = stream;
@@ -162,8 +154,7 @@ function loadMediaPipe() {
   s1.onload = () => {
     const s2 = document.createElement('script');
     s2.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js';
-    s2.onload = initHands;
-    s2.onerror = initHands;
+    s2.onload = initHands; s2.onerror = initHands;
     document.head.appendChild(s2);
   };
   s1.onerror = () => { status.textContent = 'Network error — refresh'; };
@@ -171,52 +162,38 @@ function loadMediaPipe() {
 }
 
 function initHands() {
-  status.textContent = 'Ready — show your hand';
-  try {
-    const hands = new Hands({
-      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
-    });
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 0,
-      minDetectionConfidence: 0.55,
-      minTrackingConfidence: 0.55
-    });
-    hands.onResults(results => {
-      if (results.multiHandLandmarks?.length > 0) {
-        handVisible = true;
-        status.textContent = '';
-        const lm = results.multiHandLandmarks[0];
-        FINGERTIPS.forEach((tip, i) => {
-          nodes[i].tx = lm[tip].x * canvas.width;
-          nodes[i].ty = lm[tip].y * canvas.height;
-        });
-      } else {
-        handVisible = false;
-        status.textContent = 'Show your hand';
-      }
-    });
-
-    async function loop() {
-      if (video.readyState >= 2) await hands.send({ image: video });
-      setTimeout(loop, 80);
+  const hands = new Hands({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
+  });
+  hands.setOptions({
+    maxNumHands: 1, modelComplexity: 0,
+    minDetectionConfidence: 0.55, minTrackingConfidence: 0.55
+  });
+  hands.onResults(results => {
+    if (results.multiHandLandmarks?.length > 0) {
+      handVisible = true;
+      status.textContent = '';
+      const lm = results.multiHandLandmarks[0];
+      FINGERTIPS.forEach((tip, i) => {
+        nodes[i].tx = lm[tip].x * canvas.width;
+        nodes[i].ty = lm[tip].y * canvas.height;
+      });
+    } else {
+      handVisible = false;
+      status.textContent = 'Show your hand';
     }
+  });
 
-    hands.initialize().then(() => {
-      status.textContent = 'Show your hand';
-      loop();
-    }).catch(() => {
-      status.textContent = 'Show your hand';
-      loop();
-    });
-
-  } catch(e) {
-    status.textContent = 'Error: ' + e.message;
+  async function loop() {
+    if (video.readyState >= 2) await hands.send({ image: video });
+    setTimeout(loop, 80);
   }
+  hands.initialize()
+    .then(() => { status.textContent = 'Show your hand'; loop(); })
+    .catch(() => { status.textContent = 'Show your hand'; loop(); });
 }
 
 startBtn.addEventListener('click', startCamera);
 </script>
 </body>
 </html>
-
