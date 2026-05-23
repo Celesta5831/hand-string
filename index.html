@@ -68,10 +68,10 @@ class Node {
     this.color = color;
   }
   update() {
-    let ax = (this.tx - this.x) * 0.18;
-    let ay = (this.ty - this.y) * 0.18;
-    this.vx = (this.vx + ax) * 0.75;
-    this.vy = (this.vy + ay) * 0.75;
+    let ax = (this.tx - this.x) * 0.08;
+    let ay = (this.ty - this.y) * 0.08;
+    this.vx = (this.vx + ax) * 0.88;
+    this.vy = (this.vy + ay) * 0.88;
     this.x += this.vx; this.y += this.vy;
   }
 }
@@ -200,3 +200,4 @@ startBtn.addEventListener('click', startCamera);
 </script>
 </body>
 </html>
+
