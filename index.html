@@ -24,12 +24,12 @@
     color: rgba(255,255,255,0.45);
     font-size: 11px; letter-spacing: 3px;
     text-transform: uppercase; z-index: 10;
-    white-space: nowrap;
+    white-space: nowrap; transition: opacity 0.3s;
   }
   #hint {
     position: fixed; bottom: 30px; left: 50%;
     transform: translateX(-50%);
-    color: rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.25);
     font-size: 10px; letter-spacing: 2px;
     text-transform: uppercase; z-index: 10;
     white-space: nowrap;
@@ -62,15 +62,34 @@ const hint = document.getElementById('hint');
 const startBtn = document.getElementById('startBtn');
 
 function resize() {
+  // Save drawing before resize
+  const img = drawCanvas.toDataURL();
   drawCanvas.width = window.innerWidth;
   drawCanvas.height = window.innerHeight;
+  const i = new Image(); i.onload = () => dctx.drawImage(i, 0, 0);
+  i.src = img;
 }
-resize();
+drawCanvas.width = window.innerWidth;
+drawCanvas.height = window.innerHeight;
 window.addEventListener('resize', resize);
 
-let lastPos = null;
-let fistHeld = 0;
-let cleared = false;
+// Smoothed finger position
+let smoothX = null, smoothY = null;
+const SMOOTH = 0.5; // lerp factor — higher = more responsive, lower = smoother
+
+// Points buffer for bezier curves
+let pts = [];
+
+// Drag state
+let isDragging = false;
+let dragOffsetX = 0, dragOffsetY = 0;
+let fistHeld = 0, palmHeld = 0;
+
+function isOpenPalm(lm) {
+  const tips = [8, 12, 16, 20];
+  const pips = [6, 10, 14, 18];
+  return tips.every((tip, i) => lm[tip].y < lm[pips[i]].y);
+}
 
 function isFist(lm) {
   const tips = [8, 12, 16, 20];
@@ -78,10 +97,37 @@ function isFist(lm) {
   return tips.every((tip, i) => lm[tip].y > lm[pips[i]].y);
 }
 
+function setStatus(txt, timeout) {
+  status.textContent = txt;
+  if (timeout) setTimeout(() => status.textContent = '', timeout);
+}
+
+function drawSmoothCurve() {
+  if (pts.length < 3) return;
+  dctx.beginPath();
+  dctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length - 2; i++) {
+    const cx = (pts[i].x + pts[i+1].x) / 2;
+    const cy = (pts[i].y + pts[i+1].y) / 2;
+    dctx.quadraticCurveTo(pts[i].x, pts[i].y, cx, cy);
+  }
+  const last = pts.length - 1;
+  dctx.quadraticCurveTo(pts[last-1].x, pts[last-1].y, pts[last].x, pts[last].y);
+  dctx.strokeStyle = '#00ffcc';
+  dctx.lineWidth = 3;
+  dctx.lineCap = 'round';
+  dctx.lineJoin = 'round';
+  dctx.shadowBlur = 14;
+  dctx.shadowColor = '#00ffcc';
+  dctx.stroke();
+  dctx.shadowBlur = 0;
+  // Keep only last point to continue curve
+  pts = [pts[last]];
+}
+
 async function startCamera() {
   startBtn.style.display = 'none';
   status.textContent = 'Loading...';
-  hint.textContent = '';
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { exact: 'user' } }, audio: false
@@ -90,11 +136,8 @@ async function startCamera() {
     await video.play();
     loadMediaPipe();
   } catch(e) {
-    // fallback to any camera
     try {
-      const stream2 = await navigator.mediaDevices.getUserMedia({
-        video: true, audio: false
-      });
+      const stream2 = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       video.srcObject = stream2;
       await video.play();
       loadMediaPipe();
@@ -128,57 +171,86 @@ function initHands() {
   });
 
   hands.onResults(results => {
-    if (results.multiHandLandmarks?.length > 0) {
-      const lm = results.multiHandLandmarks[0];
-
-      if (isFist(lm)) {
-        fistHeld++;
-        lastPos = null;
-        if (fistHeld === 4) {
-          dctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-          status.textContent = 'Cleared';
-          setTimeout(() => { status.textContent = ''; }, 800);
-        }
-        return;
-      }
-
-      fistHeld = 0;
-      status.textContent = '';
-      hint.textContent = '☝ draw  •  ✊ clear';
-
-      const x = lm[8].x * drawCanvas.width;
-      const y = lm[8].y * drawCanvas.height;
-
-      if (lastPos) {
-        dctx.beginPath();
-        dctx.moveTo(lastPos.x, lastPos.y);
-        dctx.lineTo(x, y);
-        dctx.strokeStyle = '#00ffcc';
-        dctx.lineWidth = 3.5;
-        dctx.lineCap = 'round';
-        dctx.lineJoin = 'round';
-        dctx.shadowBlur = 16;
-        dctx.shadowColor = '#00ffcc';
-        dctx.stroke();
-        dctx.shadowBlur = 0;
-      }
-      lastPos = { x, y };
-
-    } else {
-      lastPos = null;
-      fistHeld = 0;
-      status.textContent = 'Show your hand';
+    if (!results.multiHandLandmarks?.length) {
+      pts = [];
+      smoothX = null; smoothY = null;
+      isDragging = false;
+      fistHeld = 0; palmHeld = 0;
+      setStatus('Show your hand');
       hint.textContent = '';
+      return;
     }
+
+    const lm = results.multiHandLandmarks[0];
+    const rawX = lm[8].x * drawCanvas.width;
+    const rawY = lm[8].y * drawCanvas.height;
+
+    // Smooth finger position
+    if (smoothX === null) { smoothX = rawX; smoothY = rawY; }
+    smoothX += (rawX - smoothX) * SMOOTH;
+    smoothY += (rawY - smoothY) * SMOOTH;
+
+    // Detect gestures
+    const fist = isFist(lm);
+    const palm = isOpenPalm(lm);
+
+    // Palm = clear
+    if (palm) {
+      pts = [];
+      palmHeld++;
+      fistHeld = 0;
+      isDragging = false;
+      if (palmHeld === 4) {
+        dctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+        setStatus('Cleared', 800);
+      }
+      hint.textContent = '🖐 clearing...';
+      return;
+    }
+
+    // Fist = drag/move drawing
+    if (fist) {
+      pts = [];
+      fistHeld++;
+      palmHeld = 0;
+
+      if (fistHeld === 3) {
+        isDragging = true;
+        dragOffsetX = smoothX;
+        dragOffsetY = smoothY;
+        setStatus('Moving', 0);
+      }
+
+      if (isDragging && fistHeld > 3) {
+        const dx = smoothX - dragOffsetX;
+        const dy = smoothY - dragOffsetY;
+        // Move canvas content
+        const img = dctx.getImageData(0, 0, drawCanvas.width, drawCanvas.height);
+        dctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+        dctx.putImageData(img, dx, dy);
+        dragOffsetX = smoothX;
+        dragOffsetY = smoothY;
+      }
+      hint.textContent = '✊ moving';
+      return;
+    }
+
+    // Drawing mode
+    fistHeld = 0; palmHeld = 0; isDragging = false;
+    setStatus('');
+    hint.textContent = '☝ draw  •  ✊ move  •  🖐 clear';
+
+    pts.push({ x: smoothX, y: smoothY });
+    if (pts.length >= 4) drawSmoothCurve();
   });
 
   async function loop() {
     if (video.readyState >= 2) await hands.send({ image: video });
-    setTimeout(loop, 80);
+    setTimeout(loop, 60); // slightly faster = smoother
   }
   hands.initialize()
-    .then(() => { status.textContent = 'Show your hand'; loop(); })
-    .catch(() => { status.textContent = 'Show your hand'; loop(); });
+    .then(() => { setStatus('Show your hand'); loop(); })
+    .catch(() => { setStatus('Show your hand'); loop(); });
 }
 
 startBtn.addEventListener('click', startCamera);
