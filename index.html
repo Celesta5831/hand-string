@@ -24,12 +24,12 @@
     color: rgba(255,255,255,0.45);
     font-size: 11px; letter-spacing: 3px;
     text-transform: uppercase; z-index: 10;
-    white-space: nowrap; transition: opacity 0.3s;
+    white-space: nowrap;
   }
   #hint {
     position: fixed; bottom: 30px; left: 50%;
     transform: translateX(-50%);
-    color: rgba(255,255,255,0.25);
+    color: rgba(255,255,255,0.22);
     font-size: 10px; letter-spacing: 2px;
     text-transform: uppercase; z-index: 10;
     white-space: nowrap;
@@ -61,29 +61,33 @@ const status = document.getElementById('status');
 const hint = document.getElementById('hint');
 const startBtn = document.getElementById('startBtn');
 
-function resize() {
-  // Save drawing before resize
-  const img = drawCanvas.toDataURL();
-  drawCanvas.width = window.innerWidth;
-  drawCanvas.height = window.innerHeight;
-  const i = new Image(); i.onload = () => dctx.drawImage(i, 0, 0);
-  i.src = img;
-}
 drawCanvas.width = window.innerWidth;
 drawCanvas.height = window.innerHeight;
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => {
+  drawCanvas.width = window.innerWidth;
+  drawCanvas.height = window.innerHeight;
+});
 
-// Smoothed finger position
+// Smoothed positions
 let smoothX = null, smoothY = null;
-const SMOOTH = 0.5; // lerp factor — higher = more responsive, lower = smoother
+const SMOOTH = 0.35; // lower = smoother trails
 
-// Points buffer for bezier curves
-let pts = [];
+// Stroke buffer — collect many points, redraw stroke smoothly
+let currentStroke = []; // points in current stroke
+let allStrokes = [];    // finished strokes
 
 // Drag state
-let isDragging = false;
-let dragOffsetX = 0, dragOffsetY = 0;
-let fistHeld = 0, palmHeld = 0;
+let isPinching = false;
+let dragStartX = 0, dragStartY = 0;
+let palmHeld = 0;
+
+function dist(a, b, lm) {
+  const dx = lm[a].x - lm[b].x;
+  const dy = lm[a].y - lm[b].y;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+function isPinch(lm) { return dist(4, 8, lm) < 0.06; }
 
 function isOpenPalm(lm) {
   const tips = [8, 12, 16, 20];
@@ -91,38 +95,51 @@ function isOpenPalm(lm) {
   return tips.every((tip, i) => lm[tip].y < lm[pips[i]].y);
 }
 
-function isFist(lm) {
-  const tips = [8, 12, 16, 20];
-  const pips = [6, 10, 14, 18];
-  return tips.every((tip, i) => lm[tip].y > lm[pips[i]].y);
-}
-
 function setStatus(txt, timeout) {
   status.textContent = txt;
-  if (timeout) setTimeout(() => status.textContent = '', timeout);
+  if (timeout) setTimeout(() => { if(status.textContent === txt) status.textContent = ''; }, timeout);
 }
 
-function drawSmoothCurve() {
-  if (pts.length < 3) return;
-  dctx.beginPath();
-  dctx.moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length - 2; i++) {
-    const cx = (pts[i].x + pts[i+1].x) / 2;
-    const cy = (pts[i].y + pts[i+1].y) / 2;
-    dctx.quadraticCurveTo(pts[i].x, pts[i].y, cx, cy);
+// Draw a smooth catmull-rom spline through points
+function drawStroke(pts, ctx) {
+  if (pts.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  if (pts.length === 2) {
+    ctx.lineTo(pts[1].x, pts[1].y);
+  } else {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(i-1, 0)];
+      const p1 = pts[i];
+      const p2 = pts[i+1];
+      const p3 = pts[Math.min(i+2, pts.length-1)];
+      // Catmull-Rom to bezier
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
   }
-  const last = pts.length - 1;
-  dctx.quadraticCurveTo(pts[last-1].x, pts[last-1].y, pts[last].x, pts[last].y);
-  dctx.strokeStyle = '#00ffcc';
-  dctx.lineWidth = 3;
-  dctx.lineCap = 'round';
-  dctx.lineJoin = 'round';
-  dctx.shadowBlur = 14;
-  dctx.shadowColor = '#00ffcc';
-  dctx.stroke();
-  dctx.shadowBlur = 0;
-  // Keep only last point to continue curve
-  pts = [pts[last]];
+  ctx.strokeStyle = '#00ffcc';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowBlur = 14;
+  ctx.shadowColor = '#00ffcc';
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+function redrawAll(offsetX, offsetY) {
+  dctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+  if (offsetX !== undefined) {
+    dctx.save();
+    dctx.translate(offsetX, offsetY);
+  }
+  for (const stroke of allStrokes) drawStroke(stroke, dctx);
+  if (currentStroke.length > 1) drawStroke(currentStroke, dctx);
+  if (offsetX !== undefined) dctx.restore();
 }
 
 async function startCamera() {
@@ -132,19 +149,12 @@ async function startCamera() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { exact: 'user' } }, audio: false
     });
-    video.srcObject = stream;
-    await video.play();
-    loadMediaPipe();
+    video.srcObject = stream; await video.play(); loadMediaPipe();
   } catch(e) {
     try {
-      const stream2 = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      video.srcObject = stream2;
-      await video.play();
-      loadMediaPipe();
-    } catch(e2) {
-      status.textContent = 'Camera error — refresh';
-      startBtn.style.display = 'block';
-    }
+      const s2 = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      video.srcObject = s2; await video.play(); loadMediaPipe();
+    } catch(e2) { status.textContent = 'Camera error — refresh'; startBtn.style.display = 'block'; }
   }
 }
 
@@ -172,10 +182,11 @@ function initHands() {
 
   hands.onResults(results => {
     if (!results.multiHandLandmarks?.length) {
-      pts = [];
+      // Finger lifted — save current stroke
+      if (currentStroke.length > 1) { allStrokes.push([...currentStroke]); }
+      currentStroke = [];
       smoothX = null; smoothY = null;
-      isDragging = false;
-      fistHeld = 0; palmHeld = 0;
+      isPinching = false; palmHeld = 0;
       setStatus('Show your hand');
       hint.textContent = '';
       return;
@@ -184,69 +195,68 @@ function initHands() {
     const lm = results.multiHandLandmarks[0];
     const rawX = lm[8].x * drawCanvas.width;
     const rawY = lm[8].y * drawCanvas.height;
+    // Palm position for drag (center of hand)
+    const palmX = lm[0].x * drawCanvas.width;
+    const palmY = lm[0].y * drawCanvas.height;
 
-    // Smooth finger position
     if (smoothX === null) { smoothX = rawX; smoothY = rawY; }
     smoothX += (rawX - smoothX) * SMOOTH;
     smoothY += (rawY - smoothY) * SMOOTH;
 
-    // Detect gestures
-    const fist = isFist(lm);
     const palm = isOpenPalm(lm);
+    const pinch = isPinch(lm);
 
     // Palm = clear
     if (palm) {
-      pts = [];
+      if (currentStroke.length > 1) allStrokes.push([...currentStroke]);
+      currentStroke = [];
+      isPinching = false;
       palmHeld++;
-      fistHeld = 0;
-      isDragging = false;
       if (palmHeld === 4) {
+        allStrokes = [];
         dctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
         setStatus('Cleared', 800);
       }
       hint.textContent = '🖐 clearing...';
       return;
     }
+    palmHeld = 0;
 
-    // Fist = drag/move drawing
-    if (fist) {
-      pts = [];
-      fistHeld++;
-      palmHeld = 0;
-
-      if (fistHeld === 3) {
-        isDragging = true;
-        dragOffsetX = smoothX;
-        dragOffsetY = smoothY;
-        setStatus('Moving', 0);
+    // Pinch = move/drag all strokes
+    if (pinch) {
+      if (currentStroke.length > 1) { allStrokes.push([...currentStroke]); currentStroke = []; }
+      if (!isPinching) {
+        isPinching = true;
+        dragStartX = palmX; dragStartY = palmY;
+        setStatus('Moving');
+      } else {
+        const dx = palmX - dragStartX;
+        const dy = palmY - dragStartY;
+        // Shift all stroke points
+        for (const stroke of allStrokes) {
+          for (const pt of stroke) { pt.x += dx; pt.y += dy; }
+        }
+        dragStartX = palmX; dragStartY = palmY;
+        redrawAll();
       }
-
-      if (isDragging && fistHeld > 3) {
-        const dx = smoothX - dragOffsetX;
-        const dy = smoothY - dragOffsetY;
-        // Move canvas content
-        const img = dctx.getImageData(0, 0, drawCanvas.width, drawCanvas.height);
-        dctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-        dctx.putImageData(img, dx, dy);
-        dragOffsetX = smoothX;
-        dragOffsetY = smoothY;
-      }
-      hint.textContent = '✊ moving';
+      hint.textContent = '🤏 moving';
       return;
     }
 
-    // Drawing mode
-    fistHeld = 0; palmHeld = 0; isDragging = false;
+    isPinching = false;
     setStatus('');
-    hint.textContent = '☝ draw  •  ✊ move  •  🖐 clear';
+    hint.textContent = '☝ draw  •  🤏 move  •  🖐 clear';
 
-    pts.push({ x: smoothX, y: smoothY });
-    if (pts.length >= 4) drawSmoothCurve();
+    // Add smoothed point to current stroke
+    currentStroke.push({ x: smoothX, y: smoothY });
+
+    // Redraw everything live
+    redrawAll();
   });
 
   async function loop() {
     if (video.readyState >= 2) await hands.send({ image: video });
-    setTimeout(loop, 60); // slightly faster = smoother
+    setTimeout(loop, 55);
   }
   hands.initialize()
     .then(() => { setStatus('Show your hand'); loop(); })
