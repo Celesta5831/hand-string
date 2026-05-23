@@ -13,6 +13,11 @@
     width: 100%; height: 100%;
     object-fit: cover; opacity: 0.35;
   }
+  #drawCanvas {
+    transform: scaleX(-1);
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+  }
   #canvas {
     transform: scaleX(-1);
     position: fixed; top: 0; left: 0;
@@ -21,12 +26,20 @@
   #status {
     position: fixed; top: 24px; left: 50%;
     transform: translateX(-50%);
-    color: rgba(255,255,255,0.6);
-    font-size: 11px;
-    letter-spacing: 3px; text-transform: uppercase;
-    z-index: 10;
+    color: rgba(255,255,255,0.5);
+    font-size: 11px; letter-spacing: 3px;
+    text-transform: uppercase; z-index: 10;
     white-space: nowrap;
-    transition: opacity 0.5s;
+  }
+  #clearBtn {
+    position: fixed; bottom: 30px; right: 24px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff; padding: 10px 22px;
+    font-size: 11px; letter-spacing: 3px;
+    text-transform: uppercase; cursor: pointer;
+    z-index: 20; border-radius: 30px;
+    display: none;
   }
   #startBtn {
     position: fixed; top: 50%; left: 50%;
@@ -36,36 +49,42 @@
     color: #fff; padding: 16px 40px;
     font-size: 13px; letter-spacing: 4px;
     text-transform: uppercase; cursor: pointer;
-    z-index: 20;
-    border-radius: 40px;
-    backdrop-filter: blur(10px);
+    z-index: 20; border-radius: 40px;
   }
 </style>
 </head>
 <body>
 <video id="video" playsinline autoplay muted></video>
+<canvas id="drawCanvas"></canvas>
 <canvas id="canvas"></canvas>
 <div id="status"></div>
+<button id="clearBtn">CLEAR</button>
 <button id="startBtn">TAP TO START</button>
 
 <script>
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
+const drawCanvas = document.getElementById('drawCanvas');
 const ctx = canvas.getContext('2d');
+const dctx = drawCanvas.getContext('2d');
 const status = document.getElementById('status');
 const startBtn = document.getElementById('startBtn');
+const clearBtn = document.getElementById('clearBtn');
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-window.addEventListener('resize', () => {
+function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-});
+  drawCanvas.width = window.innerWidth;
+  drawCanvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
 
 const FINGERTIPS = [4, 8, 12, 16, 20];
 const COLORS = ['#ff003c', '#ff6600', '#00ffcc', '#0088ff', '#cc00ff'];
 
 let handVisible = false;
+let lastPos = null;
 
 class Node {
   constructor(x, y, color) {
@@ -91,7 +110,6 @@ function draw() {
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i+1; j < nodes.length; j++) {
         const a = nodes[i], b = nodes[j];
-
         const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
         grad.addColorStop(0, a.color + '55');
         grad.addColorStop(1, b.color + '55');
@@ -130,18 +148,35 @@ function draw() {
   requestAnimationFrame(draw);
 }
 
+function drawTrail(curr) {
+  if (lastPos && curr) {
+    dctx.beginPath();
+    dctx.moveTo(lastPos.x, lastPos.y);
+    dctx.lineTo(curr.x, curr.y);
+    dctx.strokeStyle = '#00ffcc';
+    dctx.lineWidth = 3;
+    dctx.lineCap = 'round';
+    dctx.lineJoin = 'round';
+    dctx.shadowBlur = 14;
+    dctx.shadowColor = '#00ffcc';
+    dctx.stroke();
+    dctx.shadowBlur = 0;
+  }
+  lastPos = curr;
+}
+
 async function startCamera() {
   startBtn.style.display = 'none';
   status.textContent = 'Loading...';
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { exact: 'user' } },
-      audio: false
+      video: { facingMode: { exact: 'user' } }, audio: false
     });
     video.srcObject = stream;
     await video.play();
     draw();
     loadMediaPipe();
+    clearBtn.style.display = 'block';
   } catch(e) {
     status.textContent = 'Camera error — tap to retry';
     startBtn.style.display = 'block';
@@ -178,8 +213,13 @@ function initHands() {
         nodes[i].tx = lm[tip].x * canvas.width;
         nodes[i].ty = lm[tip].y * canvas.height;
       });
+      // Draw with index fingertip (landmark 8)
+      const ix = lm[8].x * canvas.width;
+      const iy = lm[8].y * canvas.height;
+      drawTrail({ x: ix, y: iy });
     } else {
       handVisible = false;
+      lastPos = null;
       status.textContent = 'Show your hand';
     }
   });
@@ -193,6 +233,9 @@ function initHands() {
     .catch(() => { status.textContent = 'Show your hand'; loop(); });
 }
 
+clearBtn.addEventListener('click', () => {
+  dctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+});
 startBtn.addEventListener('click', startCamera);
 </script>
 </body>
