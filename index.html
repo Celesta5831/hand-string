@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Hand String</title>
+<title>Draw</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #000; overflow: hidden; width: 100vw; height: 100vh; font-family: monospace; }
@@ -11,14 +11,9 @@
     transform: scaleX(-1);
     position: fixed; top: 0; left: 0;
     width: 100%; height: 100%;
-    object-fit: cover; opacity: 0.35;
+    object-fit: cover; opacity: 0.25;
   }
   #drawCanvas {
-    transform: scaleX(-1);
-    position: fixed; top: 0; left: 0;
-    width: 100%; height: 100%;
-  }
-  #canvas {
     transform: scaleX(-1);
     position: fixed; top: 0; left: 0;
     width: 100%; height: 100%;
@@ -26,20 +21,18 @@
   #status {
     position: fixed; top: 24px; left: 50%;
     transform: translateX(-50%);
-    color: rgba(255,255,255,0.5);
+    color: rgba(255,255,255,0.45);
     font-size: 11px; letter-spacing: 3px;
     text-transform: uppercase; z-index: 10;
     white-space: nowrap;
   }
-  #clearBtn {
-    position: fixed; bottom: 30px; right: 24px;
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.25);
-    color: #fff; padding: 10px 22px;
-    font-size: 11px; letter-spacing: 3px;
-    text-transform: uppercase; cursor: pointer;
-    z-index: 20; border-radius: 30px;
-    display: none;
+  #hint {
+    position: fixed; bottom: 30px; left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.3);
+    font-size: 10px; letter-spacing: 2px;
+    text-transform: uppercase; z-index: 10;
+    white-space: nowrap;
   }
   #startBtn {
     position: fixed; top: 50%; left: 50%;
@@ -56,130 +49,59 @@
 <body>
 <video id="video" playsinline autoplay muted></video>
 <canvas id="drawCanvas"></canvas>
-<canvas id="canvas"></canvas>
 <div id="status"></div>
-<button id="clearBtn">CLEAR</button>
+<div id="hint"></div>
 <button id="startBtn">TAP TO START</button>
 
 <script>
 const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
 const drawCanvas = document.getElementById('drawCanvas');
-const ctx = canvas.getContext('2d');
 const dctx = drawCanvas.getContext('2d');
 const status = document.getElementById('status');
+const hint = document.getElementById('hint');
 const startBtn = document.getElementById('startBtn');
-const clearBtn = document.getElementById('clearBtn');
 
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
   drawCanvas.width = window.innerWidth;
   drawCanvas.height = window.innerHeight;
 }
 resize();
 window.addEventListener('resize', resize);
 
-const FINGERTIPS = [4, 8, 12, 16, 20];
-const COLORS = ['#ff003c', '#ff6600', '#00ffcc', '#0088ff', '#cc00ff'];
-
-let handVisible = false;
 let lastPos = null;
+let fistHeld = 0;
+let cleared = false;
 
-class Node {
-  constructor(x, y, color) {
-    this.x = x; this.y = y;
-    this.tx = x; this.ty = y;
-    this.color = color;
-  }
-  update() {
-    this.x += (this.tx - this.x) * 0.2;
-    this.y += (this.ty - this.y) * 0.2;
-  }
-}
-
-let nodes = COLORS.map((c, i) => new Node(
-  canvas.width/2 + (i-2)*60, canvas.height/2, c
-));
-
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  nodes.forEach(n => n.update());
-
-  if (handVisible) {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i+1; j < nodes.length; j++) {
-        const a = nodes[i], b = nodes[j];
-        const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
-        grad.addColorStop(0, a.color + '55');
-        grad.addColorStop(1, b.color + '55');
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = 10;
-        ctx.shadowBlur = 20; ctx.shadowColor = a.color;
-        ctx.stroke();
-
-        const grad2 = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
-        grad2.addColorStop(0, a.color);
-        grad2.addColorStop(1, b.color);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-        ctx.strokeStyle = grad2;
-        ctx.lineWidth = 1.2;
-        ctx.shadowBlur = 6; ctx.shadowColor = '#fff';
-        ctx.stroke();
-      }
-    }
-
-    nodes.forEach(n => {
-      ctx.beginPath(); ctx.arc(n.x, n.y, 7, 0, Math.PI*2);
-      ctx.fillStyle = n.color;
-      ctx.shadowBlur = 22; ctx.shadowColor = n.color;
-      ctx.fill();
-      ctx.beginPath(); ctx.arc(n.x, n.y, 2.5, 0, Math.PI*2);
-      ctx.fillStyle = '#fff';
-      ctx.shadowBlur = 6; ctx.shadowColor = '#fff';
-      ctx.fill();
-    });
-  }
-
-  ctx.shadowBlur = 0;
-  requestAnimationFrame(draw);
-}
-
-function drawTrail(curr) {
-  if (lastPos && curr) {
-    dctx.beginPath();
-    dctx.moveTo(lastPos.x, lastPos.y);
-    dctx.lineTo(curr.x, curr.y);
-    dctx.strokeStyle = '#00ffcc';
-    dctx.lineWidth = 3;
-    dctx.lineCap = 'round';
-    dctx.lineJoin = 'round';
-    dctx.shadowBlur = 14;
-    dctx.shadowColor = '#00ffcc';
-    dctx.stroke();
-    dctx.shadowBlur = 0;
-  }
-  lastPos = curr;
+function isFist(lm) {
+  const tips = [8, 12, 16, 20];
+  const pips = [6, 10, 14, 18];
+  return tips.every((tip, i) => lm[tip].y > lm[pips[i]].y);
 }
 
 async function startCamera() {
   startBtn.style.display = 'none';
   status.textContent = 'Loading...';
+  hint.textContent = '';
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { exact: 'user' } }, audio: false
     });
     video.srcObject = stream;
     await video.play();
-    draw();
     loadMediaPipe();
-    clearBtn.style.display = 'block';
   } catch(e) {
-    status.textContent = 'Camera error — tap to retry';
-    startBtn.style.display = 'block';
+    // fallback to any camera
+    try {
+      const stream2 = await navigator.mediaDevices.getUserMedia({
+        video: true, audio: false
+      });
+      video.srcObject = stream2;
+      await video.play();
+      loadMediaPipe();
+    } catch(e2) {
+      status.textContent = 'Camera error — refresh';
+      startBtn.style.display = 'block';
+    }
   }
 }
 
@@ -202,25 +124,51 @@ function initHands() {
   });
   hands.setOptions({
     maxNumHands: 1, modelComplexity: 0,
-    minDetectionConfidence: 0.55, minTrackingConfidence: 0.55
+    minDetectionConfidence: 0.6, minTrackingConfidence: 0.6
   });
+
   hands.onResults(results => {
     if (results.multiHandLandmarks?.length > 0) {
-      handVisible = true;
-      status.textContent = '';
       const lm = results.multiHandLandmarks[0];
-      FINGERTIPS.forEach((tip, i) => {
-        nodes[i].tx = lm[tip].x * canvas.width;
-        nodes[i].ty = lm[tip].y * canvas.height;
-      });
-      // Draw with index fingertip (landmark 8)
-      const ix = lm[8].x * canvas.width;
-      const iy = lm[8].y * canvas.height;
-      drawTrail({ x: ix, y: iy });
+
+      if (isFist(lm)) {
+        fistHeld++;
+        lastPos = null;
+        if (fistHeld === 4) {
+          dctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+          status.textContent = 'Cleared';
+          setTimeout(() => { status.textContent = ''; }, 800);
+        }
+        return;
+      }
+
+      fistHeld = 0;
+      status.textContent = '';
+      hint.textContent = '☝ draw  •  ✊ clear';
+
+      const x = lm[8].x * drawCanvas.width;
+      const y = lm[8].y * drawCanvas.height;
+
+      if (lastPos) {
+        dctx.beginPath();
+        dctx.moveTo(lastPos.x, lastPos.y);
+        dctx.lineTo(x, y);
+        dctx.strokeStyle = '#00ffcc';
+        dctx.lineWidth = 3.5;
+        dctx.lineCap = 'round';
+        dctx.lineJoin = 'round';
+        dctx.shadowBlur = 16;
+        dctx.shadowColor = '#00ffcc';
+        dctx.stroke();
+        dctx.shadowBlur = 0;
+      }
+      lastPos = { x, y };
+
     } else {
-      handVisible = false;
       lastPos = null;
+      fistHeld = 0;
       status.textContent = 'Show your hand';
+      hint.textContent = '';
     }
   });
 
@@ -233,9 +181,6 @@ function initHands() {
     .catch(() => { status.textContent = 'Show your hand'; loop(); });
 }
 
-clearBtn.addEventListener('click', () => {
-  dctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-});
 startBtn.addEventListener('click', startCamera);
 </script>
 </body>
