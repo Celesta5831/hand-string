@@ -63,7 +63,7 @@ window.addEventListener('resize', () => {
 });
 
 const FINGERTIPS = [4, 8, 12, 16, 20];
-const COLORS = ['#f5c842', '#f76b8a', '#43e8b0', '#4db8ff', '#b388ff'];
+const COLORS = ['#ff003c', '#ff6600', '#00ffcc', '#0088ff', '#cc00ff'];
 
 let handVisible = false;
 
@@ -135,7 +135,7 @@ async function startCamera() {
   status.textContent = 'Loading...';
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'user' } },
+      video: { facingMode: { exact: 'user' } },
       audio: false
     });
     video.srcObject = stream;
